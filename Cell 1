@@ -1,0 +1,82 @@
+!pip install tensorflow==2.15
+from IPython import get_ipython
+from IPython.display import display, Javascript, Image, clear_output
+from base64 import b64decode
+from google.colab.output import eval_js
+from PIL import Image, ImageOps, ImageFilter
+from keras.models import load_model
+import numpy as np
+import ipywidgets as widgets
+import random
+
+clear_output(wait=True)
+
+# Define take_photo within this cell to make it accessible
+def take_photo(filename='photo.jpg', quality=0.8):
+  js = Javascript('''
+    async function takePhoto(quality) {
+      const div = document.createElement('div');
+      const capture = document.createElement('button');
+      capture.textContent = 'Capture';
+      div.appendChild(capture);
+
+      const video = document.createElement('video');
+      video.style.display = 'block';
+      const stream = await navigator.mediaDevices.getUserMedia({video: true});
+
+      document.body.appendChild(div);
+      div.appendChild(video);
+      video.srcObject = stream;
+      await video.play();
+
+      // Resize the output to fit the video element.
+      google.colab.output.setIframeHeight(document.documentElement.scrollHeight, true);
+
+      // Wait for Capture to be clicked.
+      await new Promise((resolve) => capture.onclick = resolve);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      stream.getVideoTracks()[0].stop();
+      div.remove();
+      return canvas.toDataURL('image/jpeg', quality);
+    }
+    ''')
+  display(js)
+  data = eval_js('takePhoto({})'.format(quality))
+  binary = b64decode(data.split(',')[1])
+  with open(filename, 'wb') as f:
+    f.write(binary)
+  return filename
+
+# Make Keras model with https://teachablemachine.withgoogle.com/train/image
+
+model = load_model('keras_model.h5', safe_mode=False)
+
+def load_image():
+
+  # Create the array of the right shape to feed into the keras model
+  # The 'length' or number of images you can put into the array is
+  # determined by the first position in the shape tuple, in this case 1.
+  data = np.ndarray(shape=(1, 224, 224, 3), dtype=np.float32)
+  # Replace this with the path to your image
+  image = Image.open(take_photo()) # Now take_photo is accessible
+  #resize the image to a 224x224 with the same strategy as in TM2:
+  #resizing the image to be at least 224x224 and then cropping from the center
+  size = (224, 224)
+  # Use Image.Resampling.LANCZOS instead of Image.ANTIALIAS
+  image = ImageOps.fit(image, size, Image.Resampling.LANCZOS)
+
+  #turn the image into a numpy array
+  image_array = np.asarray(image)
+  # Normalize the image
+  normalized_image_array = (image_array.astype(np.float32) / 127.0) - 1
+  # Load the image into the array
+  data[0] = normalized_image_array
+
+  # run the inference
+  prediction = model.predict(data)
+  print(prediction)
+  return np.argmax(prediction)
